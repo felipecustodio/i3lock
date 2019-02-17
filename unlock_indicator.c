@@ -99,10 +99,11 @@ static double scaling_factor(void) {
 }
 
 cairo_surface_t * get_animation_frame(){
-  int rand_img = (rand() % animation_file_count);
-  const char* file_name = animation_file_names[rand_img];
+  static int file = 0;
+  const char* file_name = animation_file_names[file];
+  file = (file+1) % animation_file_count;
 
-  //add animation path to filename
+  // add animation path to filename
   char full_path[strlen(animation_path) + strlen(file_name)];
   strcpy(full_path, animation_path);
   strcat(full_path, file_name);
@@ -128,9 +129,9 @@ xcb_pixmap_t draw_image(uint32_t *resolution) {
      * indicator on, create one XCB surface to actually draw (one or more,
      * depending on the amount of screens) unlock indicators on. */
     cairo_surface_t *output = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, button_diameter_physical, button_diameter_physical);
-    cairo_surface_t *image_output = 0;
+    static cairo_surface_t *image_output = 0;
     if(animation_file_count > 0 && unlock_indicator &&
-       (unlock_state >= STATE_KEY_PRESSED || pam_state > STATE_PAM_IDLE)){
+       (unlock_state == STATE_KEY_ACTIVE)){
       image_output = get_animation_frame();
     }
 
@@ -139,21 +140,34 @@ xcb_pixmap_t draw_image(uint32_t *resolution) {
     cairo_surface_t *xcb_output = cairo_xcb_surface_create(conn, bg_pixmap, vistype, resolution[0], resolution[1]);
     cairo_t *xcb_ctx = cairo_create(xcb_output);
 
-
-    if (img) {
+    if (img && unlock_state == STATE_STARTED) {
+      for (int screen = 0; screen < xr_screens; screen++) {
         if (!tile) {
-            cairo_set_source_surface(xcb_ctx, img, 0, 0);
-            cairo_paint(xcb_ctx);
+          const int image_x = cairo_image_surface_get_width(img);
+          const int image_y = cairo_image_surface_get_height(img);
+          double scale_x = xr_resolutions[screen].width / (double)image_x;
+          double scale_y = xr_resolutions[screen].height / (double)image_y;
+
+          cairo_t *xcb_ctx_img = cairo_create(xcb_output);
+          cairo_scale(xcb_ctx_img,
+                      scale_x,
+                      scale_y);
+          cairo_set_source_surface(xcb_ctx_img, img, xr_resolutions[screen].x / scale_x, xr_resolutions[screen].y / scale_y);
+
+          /* cairo_set_source_surface(xcb_ctx, img, xr_resolutions[screen].x , xr_resolutions[screen].y); */
+          /* cairo_set_source_surface(xcb_ctx, img, 0, 0); */
+          cairo_paint(xcb_ctx_img);
         } else {
-            /* create a pattern and fill a rectangle as big as the screen */
-            cairo_pattern_t *pattern;
-            pattern = cairo_pattern_create_for_surface(img);
-            cairo_set_source(xcb_ctx, pattern);
-            cairo_pattern_set_extend(pattern, CAIRO_EXTEND_REPEAT);
-            cairo_rectangle(xcb_ctx, 0, 0, resolution[0], resolution[1]);
-            cairo_fill(xcb_ctx);
-            cairo_pattern_destroy(pattern);
+          /* create a pattern and fill a rectangle as big as the screen */
+          cairo_pattern_t *pattern;
+          pattern = cairo_pattern_create_for_surface(img);
+          cairo_set_source(xcb_ctx, pattern);
+          cairo_pattern_set_extend(pattern, CAIRO_EXTEND_REPEAT);
+          cairo_rectangle(xcb_ctx, 0, 0, resolution[0], resolution[1]);
+          cairo_fill(xcb_ctx);
+          cairo_pattern_destroy(pattern);
         }
+      }
     } else {
         char strgroups[3][3] = {{color[0], color[1], '\0'},
                                 {color[2], color[3], '\0'},
@@ -330,26 +344,27 @@ xcb_pixmap_t draw_image(uint32_t *resolution) {
     if (xr_screens > 0) {
         /* Composite the unlock indicator in the middle of each screen. */
         for (int screen = 0; screen < xr_screens; screen++) {
-            int x = (xr_resolutions[screen].x + ((xr_resolutions[screen].width / 2) - (button_diameter_physical / 2)));
-            int y = (xr_resolutions[screen].y + ((xr_resolutions[screen].height / 2) - (button_diameter_physical / 2)));
             if(image_output){ // don't draw ed if backing
               const int image_x = cairo_image_surface_get_width(image_output);
               const int image_y = cairo_image_surface_get_height(image_output);
-              double scale_x = ((float)button_diameter_physical / (float)image_x);
-              double scale_y = ((float)button_diameter_physical / (float)image_y);
+              double scale_x = xr_resolutions[screen].width / (double)image_x;
+              double scale_y = xr_resolutions[screen].height / (double)image_y;
 
-              cairo_scale (xcb_ctx,
-                           scale_x,
-                           scale_y);
+              DEBUG("x = %d, y = %d)\n", xr_resolutions[screen].x, xr_resolutions[screen].y);
+              /* DEBUG("xx = %f, xy = %f)\n", scale_x, scale_y); */
+              cairo_t *xcb_ctx2 = cairo_create(xcb_output);
 
-              cairo_set_source_surface(xcb_ctx, image_output, (x* 1/scale_x), y * 1/scale_y);
-              cairo_paint(xcb_ctx);
+              cairo_scale(xcb_ctx2,
+                          scale_x,
+                          scale_y);
+              cairo_set_source_surface(xcb_ctx2, image_output, xr_resolutions[screen].x / scale_x, xr_resolutions[screen].y / scale_y);
+              cairo_paint(xcb_ctx2);
             }
-            else{
-              cairo_set_source_surface(xcb_ctx, output, x, y);
-              cairo_rectangle(xcb_ctx, x, y, button_diameter_physical, button_diameter_physical);
-              cairo_fill(xcb_ctx);
-            }
+            /* else{ */
+            /*   cairo_set_source_surface(xcb_ctx, output, x, y); */
+            /*   cairo_rectangle(xcb_ctx, x, y, button_diameter_physical, button_diameter_physical); */
+            /*   cairo_fill(xcb_ctx); */
+            /* } */
         }
     } else {
         /* We have no information about the screen sizes/positions, so we just

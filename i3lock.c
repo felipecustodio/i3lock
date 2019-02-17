@@ -364,16 +364,24 @@ bool check_filename_is_png(char *filename){
 void load_animation_names() {
   int count=0;
   DIR *dir;
-  struct dirent *ent;
+  struct dirent **namelist;
+ struct dirent *ent;
+ int n = scandir(animation_path, &namelist, 0, alphasort);
+
+  while(n-- > 0){
+    char* name = namelist[n]->d_name;
+
+    if(check_filename_is_png(name)){
+      strcpy(animation_file_names[count] ,name);
+      DEBUG("loading animation file %s\n", name);
+      count++;
+    }
+  }
+
   if ((dir = opendir (animation_path)) != NULL) {
+
     while ((ent = readdir(dir)) != NULL)
       {
-        if(check_filename_is_png(ent->d_name)){
-          DEBUG("loading animation file %s\n", ent->d_name);
-
-          strcpy(animation_file_names[count],ent->d_name);
-          count++;
-        }
       }
 
     closedir(dir);
